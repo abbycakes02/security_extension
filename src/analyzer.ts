@@ -186,16 +186,12 @@ export class SecurityAnalyzer {
                     stack: error instanceof Error ? error.stack : undefined
                 });
                 
-                // Show user-friendly message
-                vscode.window.showWarningMessage(`AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}. Falling back to pattern-based analysis.`);
-                
                 // Fallback to pattern-based analysis
                 return this.analyzeWithPatterns(text, document);
             }
         } catch (error) {
             // Handle any unexpected errors
             console.error('Unexpected error in AI analysis:', error);
-            vscode.window.showErrorMessage('Unexpected error occurred. Using pattern-based analysis.');
             return this.analyzeWithPatterns(text, document);
         }
     }

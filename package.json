@@ -1,0 +1,91 @@
+{
+  "name": "security-analyzer",
+  "displayName": "Security Analyzer",
+  "description": "AI-powered security analysis for your code",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:python",
+    "onLanguage:java"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "securityAnalyzer.analyzeFile",
+        "title": "Analyze Current File",
+        "category": "Security"
+      },
+      {
+        "command": "securityAnalyzer.analyzeWorkspace",
+        "title": "Analyze Entire Workspace",
+        "category": "Security"
+      }
+    ],
+    "configuration": {
+      "title": "Security Analyzer",
+      "properties": {
+        "securityAnalyzer.autoAnalyze": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically analyze files as you type"
+        },
+        "securityAnalyzer.aiProvider": {
+          "type": "string",
+          "enum": [
+            "openai",
+            "letta",
+            "fetchai"
+          ],
+          "default": "openai",
+          "description": "AI provider for advanced analysis"
+        },
+        "securityAnalyzer.letta.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Letta API key for AI analysis"
+        },
+        "securityAnalyzer.letta.baseUrl": {
+          "type": "string",
+          "default": "https://api.letta.ai",
+          "description": "Letta API base URL"
+        },
+        "securityAnalyzer.letta.agentId": {
+          "type": "string",
+          "default": "",
+          "description": "Existing Letta agent ID (optional)"
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "securityAnalyzer.analyzeFile",
+          "group": "navigation",
+          "when": "editorTextFocus"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "@letta-ai/letta-client": "^0.1.132",
+    "axios": "^1.6.0"
+  }
+}

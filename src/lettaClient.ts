@@ -48,21 +48,23 @@ interface LettaMessageResponse {
     };
 }
 
-// Enhanced AI response interface with revision support
-interface AIAnalysisResponse {
-    issues: Array<{
-        line?: number;
-        lineEnd?: number;
-        severity?: string;
-        type?: string;
-        message?: string;
-        explanation?: string;
-        fix?: string;
-        codeExample?: string;
-        originalCode?: string;
-        revisedCode?: string;
-        revisionExplanation?: string;
-    }>;
+// Interface for AI analysis response
+export interface AIAnalysisIssue {
+    line?: number;
+    lineEnd?: number;
+    severity?: string;
+    type?: string;
+    message?: string;
+    explanation?: string;
+    fix?: string;
+    codeExample?: string;
+    originalCode?: string;
+    revisedCode?: string;
+    revisionExplanation?: string;
+}
+
+export interface AIAnalysisResponse {
+    issues: AIAnalysisIssue[];
     globalRevisions?: Array<{
         description: string;
         originalPattern: string;
@@ -70,6 +72,8 @@ interface AIAnalysisResponse {
         explanation: string;
     }>;
 }
+
+
 
 // Configuration interface
 export interface LettaConfig {
@@ -88,6 +92,42 @@ export class LettaClient {
     private agentId: string | null;
     private readonly DEFAULT_MEMORY_LIMIT = 2000000; // 2MB
     private readonly REQUEST_TIMEOUT = 30000; // 30 seconds
+    private readonly MAX_RETRIES = 3;
+    private readonly RETRY_DELAY = 1000; // 1 second
+
+    private retryCount = 0;
+    private lastError?: Error;
+
+    private async callApi<T>(endpoint: string, method: 'GET' | 'POST' | 'PUT', data?: any): Promise<T> {
+        try {
+            const response = await axios({
+                method,
+                url: `${this.config.baseUrl}/${endpoint}`,
+                headers: {
+                    'Authorization': `Bearer ${this.config.apiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                data,
+                timeout: this.REQUEST_TIMEOUT
+            });
+            return response.data;
+        } catch (error) {
+            this.retryCount++;
+            this.lastError = error as Error;
+            
+            if (this.retryCount < this.MAX_RETRIES) {
+                await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY * this.retryCount));
+                return this.callApi(endpoint, method, data);
+            }
+            
+            throw new Error(`API call failed after ${this.MAX_RETRIES} attempts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            if (this.retryCount > 0 && this.retryCount >= this.MAX_RETRIES) {
+                vscode.window.showWarningMessage(`Letta API failed after ${this.MAX_RETRIES} attempts. Using pattern-based analysis as fallback.`);
+            }
+            this.retryCount = 0;
+        }
+    }
 
     constructor(config?: Partial<LettaConfig>) {
         // Use provided config or default values for your API key and agent ID
@@ -518,14 +558,7 @@ CRITICAL REQUIREMENTS:
                 ]
             };
 
-            await axios.post(
-                `${this.config.baseUrl}/agents/${this.agentId}/messages`,
-                requestBody,
-                {
-                    headers: this.getAuthHeaders(),
-                    timeout: this.REQUEST_TIMEOUT,
-                }
-            );
+            await this.callApi(`agents/${this.agentId}/messages`, 'POST', requestBody);
         } catch (error) {
             console.error('Failed to send feedback to Letta:', error);
         }

@@ -1,4 +1,20 @@
 import * as vscode from 'vscode';
+import { LettaClient } from './lettaClient';
+import { AIAnalysisResponse } from './lettaClient';
+
+interface AIAnalysisIssue {
+    line?: number;
+    lineEnd?: number;
+    severity?: string;
+    type?: string;
+    message?: string;
+    explanation?: string;
+    fix?: string;
+    codeExample?: string;
+    originalCode?: string;
+    revisedCode?: string;
+    revisionExplanation?: string;
+}
 
 export interface SecurityIssue {
     line: number;
@@ -138,11 +154,47 @@ export class SecurityAnalyzer {
     
     // Placeholder for AI analysis
     private async analyzeWithAI(text: string, document: vscode.TextDocument): Promise<SecurityIssue[]> {
-        // TODO: Implement AI-based analysis
-        // This would call your AI service (OpenAI, Letta, Fetch.ai)
-        return [];
+        try {
+            const client = new LettaClient();
+            const response = await client.analyzeCode(text);
+            
+            if (!response || !response.issues) {
+                throw new Error('No response from AI service');
+            }
+
+            const issues = response.issues.map((issue: AIAnalysisIssue) => ({
+                line: issue.line || 0,
+                column: 0,
+                endLine: issue.lineEnd || issue.line || 0,
+                endColumn: 0,
+                severity: this.mapSeverity(issue.severity || 'error'),
+                message: issue.message || 'Security issue detected',
+                code: issue.type || 'unknown',
+                category: issue.type || 'Unknown',
+                suggestion: issue.explanation || issue.fix || issue.codeExample,
+                fixable: true
+            }));
+
+            return issues;
+        } catch (error) {
+            console.error('AI analysis failed:', error);
+            vscode.window.showWarningMessage('AI analysis failed. Falling back to pattern-based analysis.');
+            return this.analyzeWithPatterns(text, document);
+        }
     }
-}
+
+    private mapSeverity(severity: string): vscode.DiagnosticSeverity {
+        const severityMap: { [key: string]: vscode.DiagnosticSeverity } = {
+            'error': vscode.DiagnosticSeverity.Error,
+            'warning': vscode.DiagnosticSeverity.Warning,
+            'info': vscode.DiagnosticSeverity.Information,
+            'hint': vscode.DiagnosticSeverity.Hint
+        };
+        
+        return severityMap[severity.toLowerCase()] || vscode.DiagnosticSeverity.Error;
+    }
+    }
+
 
 interface SecurityPattern {
     id: string;

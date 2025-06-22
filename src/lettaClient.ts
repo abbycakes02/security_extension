@@ -2,10 +2,22 @@ import axios, { AxiosResponse } from 'axios';
 import * as vscode from 'vscode';
 import { SecurityIssue } from './analyzer';
 
-// Extended interface to include AI-specific properties
+// Extended interface to include AI-specific properties and revisions
 interface ExtendedSecurityIssue extends SecurityIssue {
     aiExplanation?: string;
     aiCodeExample?: string;
+    originalCode?: string;
+    revisedCode?: string;
+    revisionExplanation?: string;
+}
+
+// Interface that includes code revision information
+interface CodeRevision {
+    originalLines: string[];
+    revisedLines: string[];
+    explanation: string;
+    lineStart: number;
+    lineEnd: number;
 }
 
 // Interface for Letta API message structure
@@ -36,16 +48,26 @@ interface LettaMessageResponse {
     };
 }
 
-// Interface for AI response structure
+// Enhanced AI response interface with revision support
 interface AIAnalysisResponse {
     issues: Array<{
         line?: number;
+        lineEnd?: number;
         severity?: string;
         type?: string;
         message?: string;
         explanation?: string;
         fix?: string;
         codeExample?: string;
+        originalCode?: string;
+        revisedCode?: string;
+        revisionExplanation?: string;
+    }>;
+    globalRevisions?: Array<{
+        description: string;
+        originalPattern: string;
+        revisedPattern: string;
+        explanation: string;
     }>;
 }
 
@@ -93,7 +115,7 @@ export class LettaClient {
             const agentConfig = {
                 name: 'SecurityAnalyzer',
                 persona: this.getAgentPersona(),
-                human: 'Developer seeking security analysis for their codebase',
+                human: 'Developer seeking security analysis and code revisions for their codebase',
                 system: this.getSystemPrompt(),
                 memory_limit: this.DEFAULT_MEMORY_LIMIT,
             };
@@ -119,7 +141,7 @@ export class LettaClient {
     }
 
     /**
-     * Analyze code for security vulnerabilities
+     * Analyze code for security vulnerabilities with automatic revisions
      */
     async analyzeCode(
         code: string,
@@ -174,7 +196,68 @@ export class LettaClient {
     }
 
     /**
-     * Build the analysis prompt for the AI with enhanced security focus
+     * Generate complete revised version of the code with all security fixes applied
+     */
+    async generateRevisedCode(
+        originalCode: string,
+        fileName: string,
+        language: string
+    ): Promise<string> {
+        if (!this.agentId) {
+            await this.initialize();
+        }
+
+        try {
+            const prompt = `You are a security expert. Please provide a complete, secure revision of this ${language} code file.
+
+File: ${fileName}
+
+Original Code:
+\`\`\`${language}
+${originalCode}
+\`\`\`
+
+INSTRUCTIONS:
+1. Fix ALL security vulnerabilities
+2. Maintain the original functionality
+3. Add security best practices where appropriate
+4. Include comments explaining security improvements
+5. Ensure the code is production-ready
+
+Respond with ONLY the complete revised code in a code block, no explanations outside the code block.`;
+
+            const requestBody: LettaMessageRequest = {
+                messages: [
+                    {
+                        role: 'user',
+                        text: prompt
+                    }
+                ]
+            };
+
+            const response: AxiosResponse<LettaMessageResponse> = await axios.post(
+                `${this.config.baseUrl}/agents/${this.agentId}/messages`,
+                requestBody,
+                {
+                    headers: this.getAuthHeaders(),
+                    timeout: this.REQUEST_TIMEOUT,
+                }
+            );
+
+            const assistantMessage = response.data.messages.find(msg => msg.role === 'assistant');
+            const responseText = assistantMessage?.text || '';
+
+            // Extract code from the response
+            const codeBlockMatch = responseText.match(/```(?:\w+)?\s*([\s\S]*?)\s*```/);
+            return codeBlockMatch ? codeBlockMatch[1].trim() : responseText.trim();
+        } catch (error) {
+            console.error('Failed to generate revised code:', error);
+            return originalCode; // Return original if revision fails
+        }
+    }
+
+    /**
+     * Build the enhanced analysis prompt for the AI with revision requirements
      */
     private buildAnalysisPrompt(
         code: string,
@@ -184,7 +267,7 @@ export class LettaClient {
     ): string {
         const contextSection = context ? `Context: ${context}\n` : '';
         
-        return `You are a cybersecurity expert analyzing ${language} code for vulnerabilities. 
+        return `You are a cybersecurity expert analyzing ${language} code for vulnerabilities AND providing secure code revisions.
 
 CRITICAL: Look specifically for these JavaScript/Node.js security issues:
 
@@ -196,6 +279,8 @@ CRITICAL: Look specifically for these JavaScript/Node.js security issues:
 6. **Insecure Random**: Using Math.random() for security purposes
 7. **Path Traversal**: Unsanitized file paths
 8. **Prototype Pollution**: Unsafe object manipulation
+9. **Authentication Bypass**: Weak authentication logic
+10. **Authorization Flaws**: Missing access controls
 
 File: ${fileName}
 ${contextSection}
@@ -207,6 +292,7 @@ ${code}
 
 INSTRUCTIONS:
 - Examine EVERY line carefully for security vulnerabilities
+- For EACH vulnerability found, provide both the original vulnerable code AND the secure revision
 - Pay special attention to string concatenation, innerHTML usage, and hardcoded values
 - For SQL injection: Look for string concatenation in SQL queries like \`SELECT * FROM table WHERE id = \${userInput}\`
 - For XSS: Look for innerHTML, outerHTML, or document.write with user data
@@ -217,23 +303,39 @@ Respond ONLY with this JSON format:
   "issues": [
     {
       "line": <line_number>,
+      "lineEnd": <end_line_number>,
       "severity": "Critical|High|Medium|Low",
-      "type": "SQL Injection|XSS|Command Injection|Hardcoded Secret|Weak Cryptography|Insecure Random",
+      "type": "SQL Injection|XSS|Command Injection|Hardcoded Secret|Weak Cryptography|Insecure Random|Path Traversal|Prototype Pollution|Authentication Bypass|Authorization Flaw",
       "message": "Brief description of the vulnerability",
       "explanation": "Detailed explanation of why this is vulnerable and the potential impact",
-      "fix": "Specific remediation steps with code examples",
-      "codeExample": "Example of secure code to replace the vulnerable code"
+      "fix": "Specific remediation steps",
+      "originalCode": "The exact vulnerable code from the specified lines",
+      "revisedCode": "The secure replacement code that fixes the vulnerability",
+      "revisionExplanation": "Detailed explanation of what changed and why the revision is secure"
+    }
+  ],
+  "globalRevisions": [
+    {
+      "description": "Overall security improvement suggestion",
+      "originalPattern": "Pattern that should be changed throughout the codebase",
+      "revisedPattern": "Secure replacement pattern",
+      "explanation": "Why this global change improves security"
     }
   ]
 }
 
-If no vulnerabilities are found, return: {"issues": []}
+If no vulnerabilities are found, return: {"issues": [], "globalRevisions": []}
 
-Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`;
+CRITICAL REQUIREMENTS:
+1. Always include originalCode and revisedCode for each issue
+2. Ensure revisedCode actually fixes the vulnerability
+3. Make revisions practical and maintain functionality
+4. Include line-by-line secure alternatives
+5. Analyze every single line and be thorough`;
     }
 
     /**
-     * Parse AI response and convert to SecurityIssue objects with improved parsing
+     * Parse AI response and convert to SecurityIssue objects with revision support
      */
     private parseSecurityIssues(aiResponse: string, originalCode: string): SecurityIssue[] {
         try {
@@ -264,7 +366,7 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
             if (!jsonStr) {
                 console.warn('No JSON found in AI response');
                 console.log('Full response:', aiResponse);
-                return this.createFallbackIssues(originalCode);
+                return []; // Return empty array instead of fallback
             }
 
             console.log('Extracted JSON:', jsonStr); // Debug logging
@@ -280,142 +382,82 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
                 }
 
                 const lineIndex = Math.max(0, (issue.line || 1) - 1);
+                const endLineIndex = issue.lineEnd ? Math.max(lineIndex, issue.lineEnd - 1) : lineIndex;
                 const lineText = lines[lineIndex] || '';
                 
                 const securityIssue: ExtendedSecurityIssue = {
                     line: lineIndex,
                     column: 0,
-                    endLine: lineIndex,
-                    endColumn: lineText.length,
+                    endLine: endLineIndex,
+                    endColumn: lines[endLineIndex]?.length || lineText.length,
                     severity: this.mapSeverity(issue.severity || 'medium'),
                     message: issue.message || 'Security issue detected',
                     code: this.generateIssueCode(issue.type || 'security-issue'),
                     category: issue.type || 'Security',
                     suggestion: issue.fix || 'Review and address this security concern',
-                    fixable: this.isFixable(issue.type || ''),
+                    fixable: true, // All issues with revisions are fixable
                     aiExplanation: issue.explanation,
-                    aiCodeExample: issue.codeExample
+                    aiCodeExample: issue.codeExample,
+                    originalCode: issue.originalCode,
+                    revisedCode: issue.revisedCode,
+                    revisionExplanation: issue.revisionExplanation
                 };
 
                 issues.push(securityIssue);
+            }
+
+            // Log global revisions for potential future use
+            if (parsed.globalRevisions && parsed.globalRevisions.length > 0) {
+                console.log('Global revision suggestions:', parsed.globalRevisions);
             }
 
             return issues;
         } catch (error) {
             console.error('Failed to parse AI response:', error);
             console.log('Raw response that failed to parse:', aiResponse);
-            return this.createFallbackIssues(originalCode);
+            return []; // Return empty array instead of fallback
         }
     }
 
     /**
-     * Create fallback security issues for common patterns if AI parsing fails
+     * Apply all revisions to code and return the complete fixed version
      */
-    private createFallbackIssues(code: string): SecurityIssue[] {
-        const issues: SecurityIssue[] = [];
-        const lines = code.split('\n');
+    applyRevisions(originalCode: string, issues: SecurityIssue[]): string {
+        let revisedCode = originalCode;
+        const lines = originalCode.split('\n');
+        
+        // Sort issues by line number in descending order to avoid line number shifts
+        const sortedIssues = issues
+            .filter(issue => (issue as ExtendedSecurityIssue).revisedCode)
+            .sort((a, b) => b.line - a.line);
 
-        lines.forEach((line, index) => {
-            // Check for hardcoded secrets
-            if (line.includes('secret') || line.includes('password') || line.includes('key')) {
-                if (line.includes('=') && (line.includes('"') || line.includes("'"))) {
-                    issues.push({
-                        line: index,
-                        column: 0,
-                        endLine: index,
-                        endColumn: line.length,
-                        severity: vscode.DiagnosticSeverity.Error,
-                        message: 'Potential hardcoded secret detected',
-                        code: 'ai-hardcoded-secret',
-                        category: 'Hardcoded Secret',
-                        suggestion: 'Move secrets to environment variables or secure configuration',
-                        fixable: true
-                    });
+        for (const issue of sortedIssues) {
+            const extendedIssue = issue as ExtendedSecurityIssue;
+            if (extendedIssue.revisedCode && extendedIssue.originalCode) {
+                const lineIndex = issue.line;
+                if (lineIndex >= 0 && lineIndex < lines.length) {
+                    // Replace the specific line with the revised version
+                    lines[lineIndex] = extendedIssue.revisedCode;
                 }
             }
+        }
 
-            // Check for SQL injection patterns
-            if (line.includes('SELECT') && line.includes('${')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Error,
-                    message: 'Potential SQL injection vulnerability',
-                    code: 'ai-sql-injection',
-                    category: 'SQL Injection',
-                    suggestion: 'Use parameterized queries or prepared statements',
-                    fixable: true
-                });
-            }
+        return lines.join('\n');
+    }
 
-            // Check for XSS patterns
-            if (line.includes('innerHTML') && !line.includes('textContent')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Warning,
-                    message: 'Potential XSS vulnerability with innerHTML',
-                    code: 'ai-xss',
-                    category: 'XSS',
-                    suggestion: 'Use textContent or sanitize input before using innerHTML',
-                    fixable: true
-                });
-            }
-
-            // Check for command injection
-            if ((line.includes('exec') || line.includes('spawn')) && line.includes('+')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Error,
-                    message: 'Potential command injection vulnerability',
-                    code: 'ai-command-injection',
-                    category: 'Command Injection',
-                    suggestion: 'Validate and sanitize input, use parameterized commands',
-                    fixable: true
-                });
-            }
-
-            // Check for weak crypto
-            if (line.includes('sha1') || line.includes('md5')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Warning,
-                    message: 'Weak cryptographic algorithm detected',
-                    code: 'ai-weak-crypto',
-                    category: 'Weak Cryptography',
-                    suggestion: 'Use SHA-256 or stronger cryptographic algorithms',
-                    fixable: true
-                });
-            }
-
-            // Check for insecure random
-            if (line.includes('Math.random()')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Information,
-                    message: 'Insecure random number generation',
-                    code: 'ai-insecure-random',
-                    category: 'Insecure Random',
-                    suggestion: 'Use crypto.randomBytes() for security-sensitive random values',
-                    fixable: true
-                });
-            }
-        });
-
-        return issues;
+    /**
+     * Get revision diff for display in UI
+     */
+    getRevisionDiff(issue: SecurityIssue): { original: string; revised: string; explanation: string } | null {
+        const extendedIssue = issue as ExtendedSecurityIssue;
+        if (extendedIssue.originalCode && extendedIssue.revisedCode) {
+            return {
+                original: extendedIssue.originalCode,
+                revised: extendedIssue.revisedCode,
+                explanation: extendedIssue.revisionExplanation || 'Security fix applied'
+            };
+        }
+        return null;
     }
 
     /**
@@ -448,25 +490,6 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
     private generateIssueCode(type: string): string {
         const cleanType = type.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
         return `ai-${cleanType}`;
-    }
-
-    /**
-     * Determine if an issue type is automatically fixable
-     */
-    private isFixable(type: string): boolean {
-        const fixableTypes = [
-            'hardcoded secret',
-            'weak crypto',
-            'insecure random',
-            'xss',
-            'path traversal',
-            'weak password',
-            'sql injection',
-            'command injection'
-        ];
-        
-        const lowerType = type.toLowerCase();
-        return fixableTypes.some(fixable => lowerType.includes(fixable));
     }
 
     /**
@@ -509,7 +532,7 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
     }
 
     /**
-     * Get a project-wide security summary
+     * Get a project-wide security summary with revision recommendations
      */
     async getProjectSecuritySummary(): Promise<string> {
         if (!this.agentId) {
@@ -521,7 +544,7 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
                 messages: [
                     {
                         role: 'user',
-                        text: 'Provide a summary of security patterns and recurring issues you\'ve observed in this project. Include recommendations for improving overall security posture.'
+                        text: 'Provide a comprehensive security summary of this project including: 1) Common vulnerability patterns found, 2) Specific code revision recommendations, 3) Overall security posture assessment, 4) Priority fixes needed. Include concrete examples and actionable steps.'
                     }
                 ]
             };
@@ -554,47 +577,63 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
     }
 
     /**
-     * Get agent persona configuration with enhanced security focus
+     * Get agent persona configuration with enhanced security and revision focus
      */
     private getAgentPersona(): string {
-        return `You are a senior security engineer and code reviewer working with a software developer who is focused on writing secure code and performing security code reviews.
+        return `You are a senior security engineer and code reviewer who specializes in both identifying vulnerabilities AND providing secure code revisions.
 
-Your role is to be their trusted security partner, helping them identify and fix vulnerabilities before they reach production. You specialize in:
+Your role is to be the developer's trusted security partner, not only finding issues but automatically providing the exact code fixes they need. You excel at:
 
 1. **OWASP Top 10 vulnerabilities** - SQL injection, XSS, broken authentication, etc.
 2. **JavaScript/Node.js security patterns** - prototype pollution, command injection, path traversal
 3. **Secure coding best practices** - input validation, output encoding, crypto usage
-4. **Security code review methodology** - systematic vulnerability detection
+4. **Code revision expertise** - transforming vulnerable code into secure, production-ready code
+5. **Security code review methodology** - systematic vulnerability detection with fixes
+
+Your unique strength is providing IMMEDIATE, ACTIONABLE code revisions:
+- You don't just identify problems - you solve them
+- Every vulnerability comes with working, secure replacement code
+- Your revisions maintain functionality while eliminating security risks
+- You explain exactly what changed and why it's now secure
 
 Your communication style:
-- Direct and actionable - developers need clear guidance
-- Precise line-by-line analysis with specific remediation
-- Educational - explain WHY something is vulnerable
-- Practical - provide working secure code examples
-- Thorough - catch vulnerabilities that automated tools miss
+- Direct and solution-oriented - provide the fix, not just the problem
+- Precise line-by-line revisions with secure alternatives
+- Educational - explain WHY the revision is secure
+- Practical - provide working code that developers can immediately use
+- Thorough - catch vulnerabilities AND provide comprehensive fixes
 
-The developer you're helping values thorough security reviews and wants to learn from each finding.`;
+The developer you're helping values both security analysis AND ready-to-use secure code revisions.`;
     }
 
     /**
-     * Get system prompt for the agent with enhanced instructions
+     * Get system prompt for the agent with enhanced revision instructions
      */
     private getSystemPrompt(): string {
-        return `You are a security code analyzer. Your job is to:
+        return `You are a security code analyzer AND automatic code revision generator. Your job is to:
 
 1. **Identify security vulnerabilities** in code with high precision
-2. **Provide structured analysis** in JSON format only
-3. **Focus on actionable findings** - real security risks, not code style
-4. **Be thorough** - examine every line for security issues
+2. **Provide complete code revisions** for every vulnerability found
+3. **Provide structured analysis** in JSON format with original and revised code
+4. **Focus on actionable, working fixes** - real security solutions
+5. **Be thorough** - examine every line and provide secure alternatives
 
-CRITICAL RULES:
-- Always respond with valid JSON in the exact format requested
-- Never miss obvious security vulnerabilities
-- Provide specific line numbers and detailed explanations
-- Focus on exploitable security issues, not performance or style
-- Include concrete remediation steps
+CRITICAL RULES FOR REVISIONS:
+- Always include both originalCode and revisedCode for each issue
+- Ensure revisedCode actually eliminates the vulnerability
+- Maintain the original functionality while fixing security issues
+- Provide working, syntactically correct code revisions
+- Include detailed explanations of what changed and why it's secure
+- Focus on practical, implementable solutions
 
-Your expertise covers: SQL injection, XSS, command injection, crypto issues, authentication bypass, authorization flaws, input validation failures, and insecure configurations.`;
+SECURITY FOCUS AREAS:
+- SQL injection, XSS, command injection, crypto issues
+- Authentication bypass, authorization flaws
+- Input validation failures, insecure configurations
+- Hardcoded secrets, weak cryptography
+- Path traversal, prototype pollution
+
+Your expertise covers finding vulnerabilities AND providing the exact secure code to replace them.`;
     }
 
     /**

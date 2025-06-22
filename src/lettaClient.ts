@@ -6,6 +6,19 @@ import { SecurityIssue } from './analyzer';
 interface ExtendedSecurityIssue extends SecurityIssue {
     aiExplanation?: string;
     aiCodeExample?: string;
+    cisControl?: string;
+    cisVersion?: string;
+    complianceLevel?: 'Level 1' | 'Level 2' | 'Level 3';
+}
+
+// CIS Control mapping interface
+interface CISControl {
+    id: string;
+    title: string;
+    description: string;
+    level: 'Level 1' | 'Level 2' | 'Level 3';
+    applicableLanguages: string[];
+    checks: string[];
 }
 
 // Interface for Letta API message structure
@@ -36,7 +49,7 @@ interface LettaMessageResponse {
     };
 }
 
-// Interface for AI response structure
+// Interface for AI response structure with CIS compliance
 interface AIAnalysisResponse {
     issues: Array<{
         line?: number;
@@ -46,7 +59,17 @@ interface AIAnalysisResponse {
         explanation?: string;
         fix?: string;
         codeExample?: string;
+        cisControl?: string;
+        cisVersion?: string;
+        complianceLevel?: string;
     }>;
+    cisCompliance?: {
+        overallScore: number;
+        applicableControls: number;
+        passedControls: number;
+        failedControls: number;
+        summary: string;
+    };
 }
 
 // Configuration interface
@@ -54,11 +77,8 @@ export interface LettaConfig {
     apiKey: string;
     baseUrl: string;
     agentId?: string;
-}
-
-// Agent creation response interface
-interface CreateAgentResponse {
-    id: string;
+    cisVersion?: 'v8' | 'v7';
+    complianceLevel?: 'Level 1' | 'Level 2' | 'Level 3';
 }
 
 export class LettaClient {
@@ -66,6 +86,7 @@ export class LettaClient {
     private agentId: string | null;
     private readonly DEFAULT_MEMORY_LIMIT = 2000000; // 2MB
     private readonly REQUEST_TIMEOUT = 30000; // 30 seconds
+    private cisControls: Map<string, CISControl>;
 
     constructor(config?: Partial<LettaConfig>) {
         // Use provided config or default values for your API key and agent ID
@@ -73,9 +94,108 @@ export class LettaClient {
             apiKey: 'sk-let-Y2VkM2QzYzAtZGE1ZC00ZmExLTk3NmItZTBhY2I4YjQ2MDFhOjA5NjhlYTYyLTYyZmQtNDc1NS04OWY0LWY1NjE1YjE0ZTFhYw==',
             baseUrl: 'https://api.letta.com/v1',
             agentId: 'agent-1135b9d9-62a8-4d39-8366-55262e13d9d9',
+            cisVersion: 'v8',
+            complianceLevel: 'Level 1',
             ...config,
         };
         this.agentId = this.config.agentId || null;
+        this.cisControls = this.initializeCISControls();
+    }
+
+    /**
+     * Initialize CIS Controls mapping for software development
+     */
+    private initializeCISControls(): Map<string, CISControl> {
+        const controls = new Map<string, CISControl>();
+
+        // CIS Control 3: Data Protection
+        controls.set('CIS-3', {
+            id: 'CIS-3',
+            title: 'Data Protection',
+            description: 'Develop processes and technical controls to identify, classify, securely handle, retain, and dispose of data.',
+            level: 'Level 1',
+            applicableLanguages: ['javascript', 'typescript', 'node.js', 'python', 'java'],
+            checks: [
+                'Encrypt sensitive data at rest and in transit',
+                'Implement secure key management',
+                'Sanitize data before logging',
+                'Use secure data transmission protocols'
+            ]
+        });
+
+        // CIS Control 6: Access Control Management
+        controls.set('CIS-6', {
+            id: 'CIS-6',
+            title: 'Access Control Management',
+            description: 'Use the principle of least privilege to authorize access to assets and technologies.',
+            level: 'Level 1',
+            applicableLanguages: ['javascript', 'typescript', 'node.js', 'python', 'java'],
+            checks: [
+                'Implement proper authentication mechanisms',
+                'Use role-based access control',
+                'Validate user permissions before granting access',
+                'Implement secure session management'
+            ]
+        });
+
+        // CIS Control 11: Data Recovery
+        controls.set('CIS-11', {
+            id: 'CIS-11',
+            title: 'Data Recovery',
+            description: 'Establish and maintain data recovery practices sufficient to restore in-scope enterprise assets.',
+            level: 'Level 1',
+            applicableLanguages: ['javascript', 'typescript', 'node.js', 'python', 'java'],
+            checks: [
+                'Implement secure backup mechanisms',
+                'Validate data integrity',
+                'Test recovery procedures',
+                'Protect backup data from unauthorized access'
+            ]
+        });
+
+        // CIS Control 16: Application Software Security
+        controls.set('CIS-16', {
+            id: 'CIS-16',
+            title: 'Application Software Security',
+            description: 'Manage the security life cycle of in-house developed, hosted, or acquired software.',
+            level: 'Level 1',
+            applicableLanguages: ['javascript', 'typescript', 'node.js', 'python', 'java'],
+            checks: [
+                'Input validation and sanitization',
+                'Output encoding',
+                'SQL injection prevention',
+                'Cross-site scripting (XSS) prevention',
+                'Command injection prevention',
+                'Secure error handling',
+                'Secure cryptographic implementations'
+            ]
+        });
+
+        // CIS Control 18: Penetration Testing
+        controls.set('CIS-18', {
+            id: 'CIS-18',
+            title: 'Penetration Testing',
+            description: 'Test the effectiveness and resiliency of enterprise assets through identifying and exploiting weaknesses.',
+            level: 'Level 2',
+            applicableLanguages: ['javascript', 'typescript', 'node.js', 'python', 'java'],
+            checks: [
+                'Code review for security vulnerabilities',
+                'Static application security testing (SAST)',
+                'Dynamic application security testing (DAST)',
+                'Dependency vulnerability scanning'
+            ]
+        });
+
+        return controls;
+    }
+
+    /**
+     * Get CIS controls applicable to the given language
+     */
+    private getApplicableCISControls(language: string): CISControl[] {
+        return Array.from(this.cisControls.values()).filter(control =>
+            control.applicableLanguages.includes(language.toLowerCase())
+        );
     }
 
     async initialize(): Promise<void> {
@@ -86,14 +206,14 @@ export class LettaClient {
     }
 
     /**
-     * Create a new security analysis agent
+     * Create a new security analysis agent with CIS compliance focus
      */
     private async createSecurityAgent(): Promise<string> {
         try {
             const agentConfig = {
-                name: 'SecurityAnalyzer',
+                name: 'CISSecurityAnalyzer',
                 persona: this.getAgentPersona(),
-                human: 'Developer seeking security analysis for their codebase',
+                human: 'Developer seeking CIS benchmark compliance and security analysis for their codebase',
                 system: this.getSystemPrompt(),
                 memory_limit: this.DEFAULT_MEMORY_LIMIT,
             };
@@ -119,7 +239,7 @@ export class LettaClient {
     }
 
     /**
-     * Analyze code for security vulnerabilities
+     * Analyze code for security vulnerabilities with CIS compliance checking
      */
     async analyzeCode(
         code: string,
@@ -127,6 +247,11 @@ export class LettaClient {
         language: string,
         context?: string
     ): Promise<SecurityIssue[]> {
+        console.log('=== ANALYZING CODE WITH CIS COMPLIANCE ===');
+        console.log('Code length:', code.length);
+        console.log('CIS Version:', this.config.cisVersion);
+        console.log('Compliance Level:', this.config.complianceLevel);
+        
         if (!code.trim()) {
             return [];
         }
@@ -136,9 +261,8 @@ export class LettaClient {
         }
 
         try {
-            const prompt = this.buildAnalysisPrompt(code, fileName, language, context);
+            const prompt = this.buildCISAnalysisPrompt(code, fileName, language, context);
             
-            // Use the correct Letta API message structure
             const requestBody: LettaMessageRequest = {
                 messages: [
                     {
@@ -157,45 +281,50 @@ export class LettaClient {
                 }
             );
 
-            // Extract the assistant's response
             const assistantMessage = response.data.messages.find(msg => msg.role === 'assistant');
             const responseText = assistantMessage?.text || '';
 
-            return this.parseSecurityIssues(responseText, code);
+            return this.parseSecurityIssuesWithCIS(responseText, code, language);
         } catch (error) {
-            console.error('Letta analysis failed:', error);
-            // Log the full error for debugging
+            console.error('Letta CIS analysis failed:', error);
             if (axios.isAxiosError(error)) {
                 console.error('Response status:', error.response?.status);
                 console.error('Response data:', error.response?.data);
             }
-            return [];
+            return this.createCISFallbackIssues(code, language);
         }
     }
 
     /**
-     * Build the analysis prompt for the AI with enhanced security focus
+     * Build the analysis prompt with CIS benchmark context
      */
-    private buildAnalysisPrompt(
+    private buildCISAnalysisPrompt(
         code: string,
         fileName: string,
         language: string,
         context?: string
     ): string {
+        const applicableControls = this.getApplicableCISControls(language);
         const contextSection = context ? `Context: ${context}\n` : '';
         
-        return `You are a cybersecurity expert analyzing ${language} code for vulnerabilities. 
+        const cisControlsSection = applicableControls.map(control => 
+            `**${control.id} - ${control.title}** (${control.level}):\n${control.description}\nChecks: ${control.checks.join(', ')}`
+        ).join('\n\n');
 
-CRITICAL: Look specifically for these JavaScript/Node.js security issues:
+        return `You are a cybersecurity expert analyzing ${language} code for CIS Controls ${this.config.cisVersion} compliance at ${this.config.complianceLevel}.
 
-1. **SQL Injection**: Concatenating user input directly into SQL queries
-2. **Cross-Site Scripting (XSS)**: Using innerHTML or similar with unsanitized input
-3. **Command Injection**: Concatenating user input into shell commands
-4. **Hardcoded Secrets**: API keys, passwords, tokens in plain text
-5. **Weak Cryptography**: Using MD5, SHA1, or weak encryption
-6. **Insecure Random**: Using Math.random() for security purposes
-7. **Path Traversal**: Unsanitized file paths
-8. **Prototype Pollution**: Unsafe object manipulation
+CRITICAL CIS CONTROLS TO EVALUATE:
+${cisControlsSection}
+
+PRIMARY SECURITY VULNERABILITIES TO DETECT:
+1. **SQL Injection** (CIS-16): Concatenating user input directly into SQL queries
+2. **Cross-Site Scripting (XSS)** (CIS-16): Using innerHTML or similar with unsanitized input
+3. **Command Injection** (CIS-16): Concatenating user input into shell commands
+4. **Hardcoded Secrets** (CIS-3): API keys, passwords, tokens in plain text
+5. **Weak Cryptography** (CIS-3): Using MD5, SHA1, or weak encryption
+6. **Insecure Authentication** (CIS-6): Weak session management, poor access controls
+7. **Input Validation Failures** (CIS-16): Missing or insufficient input validation
+8. **Insecure Error Handling** (CIS-16): Exposing sensitive information in errors
 
 File: ${fileName}
 ${contextSection}
@@ -205,12 +334,12 @@ Code to analyze:
 ${code}
 \`\`\`
 
-INSTRUCTIONS:
-- Examine EVERY line carefully for security vulnerabilities
-- Pay special attention to string concatenation, innerHTML usage, and hardcoded values
-- For SQL injection: Look for string concatenation in SQL queries like \`SELECT * FROM table WHERE id = \${userInput}\`
-- For XSS: Look for innerHTML, outerHTML, or document.write with user data
-- For Command Injection: Look for exec, spawn, or shell commands with concatenated input
+ANALYSIS REQUIREMENTS:
+- Examine EVERY line for CIS control violations
+- Map each finding to specific CIS control(s)
+- Assess compliance level impact (Level 1/2/3)
+- Provide CIS-aligned remediation guidance
+- Calculate overall CIS compliance score
 
 Respond ONLY with this JSON format:
 {
@@ -218,64 +347,55 @@ Respond ONLY with this JSON format:
     {
       "line": <line_number>,
       "severity": "Critical|High|Medium|Low",
-      "type": "SQL Injection|XSS|Command Injection|Hardcoded Secret|Weak Cryptography|Insecure Random",
-      "message": "Brief description of the vulnerability",
-      "explanation": "Detailed explanation of why this is vulnerable and the potential impact",
-      "fix": "Specific remediation steps with code examples",
-      "codeExample": "Example of secure code to replace the vulnerable code"
+      "type": "SQL Injection|XSS|Command Injection|Hardcoded Secret|Weak Cryptography|Access Control|Input Validation",
+      "message": "Brief description linking to CIS control violation",
+      "explanation": "Detailed explanation of CIS control violation and security impact",
+      "fix": "CIS-aligned remediation steps with code examples",
+      "codeExample": "Secure code example following CIS guidelines",
+      "cisControl": "CIS-X (e.g., CIS-16)",
+      "cisVersion": "${this.config.cisVersion}",
+      "complianceLevel": "Level 1|Level 2|Level 3"
     }
-  ]
+  ],
+  "cisCompliance": {
+    "overallScore": <0-100>,
+    "applicableControls": <number>,
+    "passedControls": <number>,
+    "failedControls": <number>,
+    "summary": "Brief CIS compliance assessment"
+  }
 }
 
-If no vulnerabilities are found, return: {"issues": []}
+If no violations are found, return: {"issues": [], "cisCompliance": {"overallScore": 100, "applicableControls": X, "passedControls": X, "failedControls": 0, "summary": "Code appears compliant with applicable CIS controls"}}
 
-Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`;
+Focus on CIS control violations that represent real security risks.`;
     }
 
     /**
-     * Parse AI response and convert to SecurityIssue objects with improved parsing
+     * Parse AI response with CIS compliance information
      */
-    private parseSecurityIssues(aiResponse: string, originalCode: string): SecurityIssue[] {
+    private parseSecurityIssuesWithCIS(aiResponse: string, originalCode: string, language: string): SecurityIssue[] {
         try {
-            console.log('AI Response:', aiResponse); // Debug logging
+            console.log('AI Response with CIS:', aiResponse);
             
-            // Try multiple approaches to extract JSON
-            let jsonStr = '';
-            
-            // First try: Look for JSON wrapped in code blocks
-            const codeBlockMatch = aiResponse.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
-            if (codeBlockMatch) {
-                jsonStr = codeBlockMatch[1];
-            } else {
-                // Second try: Look for standalone JSON object
-                const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    jsonStr = jsonMatch[0];
-                } else {
-                    // Third try: Extract everything between first { and last }
-                    const startIdx = aiResponse.indexOf('{');
-                    const endIdx = aiResponse.lastIndexOf('}');
-                    if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-                        jsonStr = aiResponse.substring(startIdx, endIdx + 1);
-                    }
-                }
-            }
-
+            let jsonStr = this.extractJSON(aiResponse);
             if (!jsonStr) {
-                console.warn('No JSON found in AI response');
-                console.log('Full response:', aiResponse);
-                return this.createFallbackIssues(originalCode);
+                console.warn('No JSON found in AI response, using CIS fallback');
+                return this.createCISFallbackIssues(originalCode, language);
             }
-
-            console.log('Extracted JSON:', jsonStr); // Debug logging
 
             const parsed: AIAnalysisResponse = JSON.parse(jsonStr);
             const issues: SecurityIssue[] = [];
             const lines = originalCode.split('\n');
 
+            // Log CIS compliance summary
+            if (parsed.cisCompliance) {
+                console.log('CIS Compliance Summary:', parsed.cisCompliance);
+            }
+
             for (const issue of parsed.issues || []) {
                 if (!this.isValidIssue(issue)) {
-                    console.warn('Skipping invalid issue:', issue);
+                    console.warn('Skipping invalid CIS issue:', issue);
                     continue;
                 }
 
@@ -288,13 +408,16 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
                     endLine: lineIndex,
                     endColumn: lineText.length,
                     severity: this.mapSeverity(issue.severity || 'medium'),
-                    message: issue.message || 'Security issue detected',
-                    code: this.generateIssueCode(issue.type || 'security-issue'),
-                    category: issue.type || 'Security',
-                    suggestion: issue.fix || 'Review and address this security concern',
+                    message: `${issue.message} (${issue.cisControl || 'CIS Violation'})`,
+                    code: this.generateCISIssueCode(issue.type || 'cis-violation', issue.cisControl),
+                    category: issue.type || 'CIS Compliance',
+                    suggestion: issue.fix || 'Review and address this CIS control violation',
                     fixable: this.isFixable(issue.type || ''),
                     aiExplanation: issue.explanation,
-                    aiCodeExample: issue.codeExample
+                    aiCodeExample: issue.codeExample,
+                    cisControl: issue.cisControl,
+                    cisVersion: issue.cisVersion || this.config.cisVersion,
+                    complianceLevel: issue.complianceLevel as 'Level 1' | 'Level 2' | 'Level 3'
                 };
 
                 issues.push(securityIssue);
@@ -302,121 +425,233 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
 
             return issues;
         } catch (error) {
-            console.error('Failed to parse AI response:', error);
-            console.log('Raw response that failed to parse:', aiResponse);
-            return this.createFallbackIssues(originalCode);
+            console.error('Failed to parse CIS AI response:', error);
+            return this.createCISFallbackIssues(originalCode, language);
         }
     }
 
     /**
-     * Create fallback security issues for common patterns if AI parsing fails
+     * Create CIS-aware fallback security issues
      */
-    private createFallbackIssues(code: string): SecurityIssue[] {
+    private createCISFallbackIssues(code: string, language: string): SecurityIssue[] {
+        console.log('=== CIS FALLBACK ANALYSIS ===');
         const issues: SecurityIssue[] = [];
         const lines = code.split('\n');
+        const applicableControls = this.getApplicableCISControls(language);
 
         lines.forEach((line, index) => {
-            // Check for hardcoded secrets
-            if (line.includes('secret') || line.includes('password') || line.includes('key')) {
-                if (line.includes('=') && (line.includes('"') || line.includes("'"))) {
-                    issues.push({
-                        line: index,
-                        column: 0,
-                        endLine: index,
-                        endColumn: line.length,
-                        severity: vscode.DiagnosticSeverity.Error,
-                        message: 'Potential hardcoded secret detected',
-                        code: 'ai-hardcoded-secret',
-                        category: 'Hardcoded Secret',
-                        suggestion: 'Move secrets to environment variables or secure configuration',
-                        fixable: true
-                    });
-                }
+            const trimmedLine = line.trim().toLowerCase();
+            
+            // CIS-3 Data Protection: Hardcoded secrets
+            if (this.detectHardcodedSecrets(trimmedLine)) {
+                issues.push(this.createCISIssue(
+                    index, line, 'Critical', 'Hardcoded Secret', 
+                    'Hardcoded secret violates CIS-3 Data Protection requirements',
+                    'CIS-3', 'Move secrets to secure configuration management (CIS-3.1)',
+                    'Level 1'
+                ));
             }
 
-            // Check for SQL injection patterns
-            if (line.includes('SELECT') && line.includes('${')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Error,
-                    message: 'Potential SQL injection vulnerability',
-                    code: 'ai-sql-injection',
-                    category: 'SQL Injection',
-                    suggestion: 'Use parameterized queries or prepared statements',
-                    fixable: true
-                });
+            // CIS-16 Application Security: SQL Injection
+            if (this.detectSQLInjection(trimmedLine)) {
+                issues.push(this.createCISIssue(
+                    index, line, 'Critical', 'SQL Injection',
+                    'SQL injection vulnerability violates CIS-16 Application Software Security',
+                    'CIS-16', 'Use parameterized queries as per CIS-16.1 secure coding practices',
+                    'Level 1'
+                ));
             }
 
-            // Check for XSS patterns
-            if (line.includes('innerHTML') && !line.includes('textContent')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Warning,
-                    message: 'Potential XSS vulnerability with innerHTML',
-                    code: 'ai-xss',
-                    category: 'XSS',
-                    suggestion: 'Use textContent or sanitize input before using innerHTML',
-                    fixable: true
-                });
+            // CIS-16 Application Security: XSS
+            if (this.detectXSS(trimmedLine)) {
+                issues.push(this.createCISIssue(
+                    index, line, 'High', 'XSS',
+                    'XSS vulnerability violates CIS-16 Application Software Security',
+                    'CIS-16', 'Implement output encoding as per CIS-16.2 secure development practices',
+                    'Level 1'
+                ));
             }
 
-            // Check for command injection
-            if ((line.includes('exec') || line.includes('spawn')) && line.includes('+')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Error,
-                    message: 'Potential command injection vulnerability',
-                    code: 'ai-command-injection',
-                    category: 'Command Injection',
-                    suggestion: 'Validate and sanitize input, use parameterized commands',
-                    fixable: true
-                });
+            // CIS-16 Application Security: Command Injection
+            if (this.detectCommandInjection(trimmedLine)) {
+                issues.push(this.createCISIssue(
+                    index, line, 'Critical', 'Command Injection',
+                    'Command injection violates CIS-16 Application Software Security',
+                    'CIS-16', 'Validate and sanitize all inputs per CIS-16.3',
+                    'Level 1'
+                ));
             }
 
-            // Check for weak crypto
-            if (line.includes('sha1') || line.includes('md5')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Warning,
-                    message: 'Weak cryptographic algorithm detected',
-                    code: 'ai-weak-crypto',
-                    category: 'Weak Cryptography',
-                    suggestion: 'Use SHA-256 or stronger cryptographic algorithms',
-                    fixable: true
-                });
+            // CIS-3 Data Protection: Weak Cryptography
+            if (this.detectWeakCrypto(trimmedLine)) {
+                issues.push(this.createCISIssue(
+                    index, line, 'Medium', 'Weak Cryptography',
+                    'Weak cryptographic algorithm violates CIS-3 Data Protection',
+                    'CIS-3', 'Use approved strong cryptographic algorithms per CIS-3.11',
+                    'Level 1'
+                ));
             }
 
-            // Check for insecure random
-            if (line.includes('Math.random()')) {
-                issues.push({
-                    line: index,
-                    column: 0,
-                    endLine: index,
-                    endColumn: line.length,
-                    severity: vscode.DiagnosticSeverity.Information,
-                    message: 'Insecure random number generation',
-                    code: 'ai-insecure-random',
-                    category: 'Insecure Random',
-                    suggestion: 'Use crypto.randomBytes() for security-sensitive random values',
-                    fixable: true
-                });
+            // CIS-6 Access Control: Insecure Authentication
+            if (this.detectInsecureAuth(trimmedLine)) {
+                issues.push(this.createCISIssue(
+                    index, line, 'High', 'Insecure Authentication',
+                    'Insecure authentication violates CIS-6 Access Control Management',
+                    'CIS-6', 'Implement secure authentication mechanisms per CIS-6.2',
+                    'Level 1'
+                ));
             }
         });
 
+        console.log(`CIS Fallback found ${issues.length} issues`);
         return issues;
     }
+
+    // CIS-specific detection methods
+    private detectHardcodedSecrets(line: string): boolean {
+        return (line.includes('secret') || line.includes('password') || 
+                line.includes('key') || line.includes('token')) && 
+               line.includes('=') && 
+               (line.includes('"') || line.includes("'")) &&
+               !line.includes('process.env') && 
+               !line.includes('config.');
+    }
+
+    private detectSQLInjection(line: string): boolean {
+        return (line.includes('select') || line.includes('insert') || 
+                line.includes('update') || line.includes('delete')) &&
+               (line.includes('${') || line.includes('" +') || 
+                line.includes("' +") || line.includes('` +'));
+    }
+
+    private detectXSS(line: string): boolean {
+        return (line.includes('innerhtml') || line.includes('outerhtml') || 
+                line.includes('document.write')) && 
+               !line.includes('textcontent') &&
+               !line.includes('sanitize');
+    }
+
+    private detectCommandInjection(line: string): boolean {
+        return (line.includes('exec') || line.includes('spawn') || 
+                line.includes('system')) &&
+               (line.includes('+') || line.includes('${') || 
+                line.includes('" +') || line.includes("' +"));
+    }
+
+    private detectWeakCrypto(line: string): boolean {
+        return line.includes('sha1') || line.includes('md5') ||
+               (line.includes('crypto') && 
+                (line.includes('des') || line.includes('rc4')));
+    }
+
+    private detectInsecureAuth(line: string): boolean {
+        return (line.includes('auth') || line.includes('login') || line.includes('session')) &&
+               (line.includes('md5') || line.includes('sha1') || 
+                line.includes('math.random') || line.includes('== password'));
+    }
+
+    /**
+     * Create a CIS-compliant security issue
+     */
+    private createCISIssue(
+        lineIndex: number, 
+        lineText: string, 
+        severity: string, 
+        type: string, 
+        message: string, 
+        cisControl: string, 
+        suggestion: string,
+        complianceLevel: string
+    ): ExtendedSecurityIssue {
+        return {
+            line: lineIndex,
+            column: 0,
+            endLine: lineIndex,
+            endColumn: lineText.length,
+            severity: this.mapSeverity(severity),
+            message,
+            code: this.generateCISIssueCode(type, cisControl),
+            category: `${type} (${cisControl})`,
+            suggestion,
+            fixable: true,
+            cisControl,
+            cisVersion: this.config.cisVersion,
+            complianceLevel: complianceLevel as 'Level 1' | 'Level 2' | 'Level 3'
+        };
+    }
+
+    /**
+     * Extract JSON from AI response
+     */
+    private extractJSON(response: string): string | null {
+        const codeBlockMatch = response.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+        if (codeBlockMatch) return codeBlockMatch[1];
+        
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) return jsonMatch[0];
+        
+        const startIdx = response.indexOf('{');
+        const endIdx = response.lastIndexOf('}');
+        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+            return response.substring(startIdx, endIdx + 1);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Generate CIS-specific issue codes
+     */
+    private generateCISIssueCode(type: string, cisControl?: string): string {
+        const cleanType = type.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const controlSuffix = cisControl ? `-${cisControl.toLowerCase()}` : '';
+        return `cis-${cleanType}${controlSuffix}`;
+    }
+
+    /**
+     * Get CIS compliance report for a project
+     */
+    async getCISComplianceReport(): Promise<string> {
+        if (!this.agentId) {
+            return 'AI agent not initialized';
+        }
+
+        try {
+            const requestBody: LettaMessageRequest = {
+                messages: [
+                    {
+                        role: 'user',
+                        text: `Generate a comprehensive CIS Controls ${this.config.cisVersion} compliance report for this project. Include:
+                        
+1. Overall compliance score and status
+2. Breakdown by CIS control category
+3. Critical findings requiring immediate attention
+4. Recommendations for improving compliance posture
+5. Next steps for achieving higher compliance levels
+
+Focus on ${this.config.complianceLevel} requirements.`
+                    }
+                ]
+            };
+
+            const response: AxiosResponse<LettaMessageResponse> = await axios.post(
+                `${this.config.baseUrl}/agents/${this.agentId}/messages`,
+                requestBody,
+                {
+                    headers: this.getAuthHeaders(),
+                    timeout: this.REQUEST_TIMEOUT,
+                }
+            );
+
+            const assistantMessage = response.data.messages.find(msg => msg.role === 'assistant');
+            return assistantMessage?.text || 'No CIS compliance report available';
+        } catch (error) {
+            console.error('Failed to get CIS compliance report:', error);
+            return `Unable to generate CIS compliance report: ${this.getErrorMessage(error)}`;
+        }
+    }
+
+    // ... (keep all existing methods from the original class)
 
     /**
      * Validate if an issue object has required properties
@@ -443,26 +678,13 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
     }
 
     /**
-     * Generate a consistent issue code
-     */
-    private generateIssueCode(type: string): string {
-        const cleanType = type.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-        return `ai-${cleanType}`;
-    }
-
-    /**
      * Determine if an issue type is automatically fixable
      */
     private isFixable(type: string): boolean {
         const fixableTypes = [
-            'hardcoded secret',
-            'weak crypto',
-            'insecure random',
-            'xss',
-            'path traversal',
-            'weak password',
-            'sql injection',
-            'command injection'
+            'hardcoded secret', 'weak crypto', 'insecure random', 'xss', 
+            'path traversal', 'weak password', 'sql injection', 'command injection',
+            'input validation', 'access control'
         ];
         
         const lowerType = type.toLowerCase();
@@ -484,7 +706,7 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
 
         try {
             const commentSection = comment ? `. Comment: ${comment}` : '';
-            const feedbackMessage = `User feedback on security issue ${issueId}: ${feedback}${commentSection}`;
+            const feedbackMessage = `User feedback on CIS security issue ${issueId}: ${feedback}${commentSection}. Please learn from this for future CIS compliance analysis.`;
             
             const requestBody: LettaMessageRequest = {
                 messages: [
@@ -521,7 +743,12 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
                 messages: [
                     {
                         role: 'user',
-                        text: 'Provide a summary of security patterns and recurring issues you\'ve observed in this project. Include recommendations for improving overall security posture.'
+                        text: `Provide a comprehensive security summary including:
+                        1. CIS Controls ${this.config.cisVersion} compliance status
+                        2. Security patterns and recurring issues observed
+                        3. Recommendations for improving overall security posture
+                        4. Specific CIS control improvements needed
+                        5. Risk assessment and prioritization`
                     }
                 ]
             };
@@ -554,47 +781,62 @@ Analyze every single line and be thorough. Do not miss obvious vulnerabilities.`
     }
 
     /**
-     * Get agent persona configuration with enhanced security focus
+     * Get agent persona configuration with CIS focus
      */
     private getAgentPersona(): string {
-        return `You are a senior security engineer and code reviewer working with a software developer who is focused on writing secure code and performing security code reviews.
+        return `You are a senior security engineer and CIS Controls expert working with a software developer who needs to ensure their code meets CIS benchmark requirements.
 
-Your role is to be their trusted security partner, helping them identify and fix vulnerabilities before they reach production. You specialize in:
+Your expertise includes:
 
-1. **OWASP Top 10 vulnerabilities** - SQL injection, XSS, broken authentication, etc.
-2. **JavaScript/Node.js security patterns** - prototype pollution, command injection, path traversal
-3. **Secure coding best practices** - input validation, output encoding, crypto usage
-4. **Security code review methodology** - systematic vulnerability detection
+1. **CIS Controls ${this.config.cisVersion}** - Deep knowledge of all 18 controls and their implementation
+2. **Secure Software Development** - CIS Control 16 implementation in practice
+3. **Data Protection** - CIS Control 3 requirements for encryption and data handling
+4. **Access Control Management** - CIS Control 6 implementation patterns
+5. **Application Security Testing** - CIS Control 18 practices
 
-Your communication style:
-- Direct and actionable - developers need clear guidance
-- Precise line-by-line analysis with specific remediation
-- Educational - explain WHY something is vulnerable
-- Practical - provide working secure code examples
-- Thorough - catch vulnerabilities that automated tools miss
+Your role is to:
+- Analyze code for CIS control violations
+- Map security findings to specific CIS controls
+- Provide CIS-compliant remediation guidance
+- Assess overall compliance posture
+- Recommend improvements for higher compliance levels
 
-The developer you're helping values thorough security reviews and wants to learn from each finding.`;
+Communication style:
+- Reference specific CIS controls in findings
+- Provide compliance-focused remediation
+- Explain business risk in CIS framework context
+- Prioritize findings by compliance level impact
+- Give actionable, CIS-aligned recommendations
+
+The developer values thorough CIS compliance and wants to understand how each security finding impacts their overall compliance posture.`;
     }
 
     /**
-     * Get system prompt for the agent with enhanced instructions
+     * Get system prompt for the agent with CIS focus
      */
     private getSystemPrompt(): string {
-        return `You are a security code analyzer. Your job is to:
+        return `You are a CIS Controls expert and security code analyzer. Your primary responsibilities:
 
-1. **Identify security vulnerabilities** in code with high precision
-2. **Provide structured analysis** in JSON format only
-3. **Focus on actionable findings** - real security risks, not code style
-4. **Be thorough** - examine every line for security issues
+1. **Analyze code for CIS Controls ${this.config.cisVersion} compliance**
+2. **Map security findings to specific CIS controls**  
+3. **Provide structured analysis in JSON format**
+4. **Focus on ${this.config.complianceLevel} requirements**
 
-CRITICAL RULES:
-- Always respond with valid JSON in the exact format requested
-- Never miss obvious security vulnerabilities
-- Provide specific line numbers and detailed explanations
-- Focus on exploitable security issues, not performance or style
-- Include concrete remediation steps
+CRITICAL CIS CONTROL MAPPING:
+- **CIS-3 Data Protection**: Encryption, key management, data handling
+- **CIS-6 Access Control**: Authentication, authorization, session management  
+- **CIS-11 Data Recovery**: Backup security, data integrity
+- **CIS-16 Application Security**: Input validation, secure coding, vulnerability prevention
+- **CIS-18 Penetration Testing**: Code review, security testing
 
-Your expertise covers: SQL injection, XSS, command injection, crypto issues, authentication bypass, authorization flaws, input validation failures, and insecure configurations.`;
+ANALYSIS REQUIREMENTS:
+- Always map findings to CIS control violations
+- Provide CIS version and compliance level context
+- Include compliance scoring when possible
+- Focus on exploitable security issues that violate CIS controls
+- Give CIS-aligned remediation guidance
+
+Your responses must be valid JSON in the exact format requested, with accurate CIS control references.`;
     }
 
     /**
@@ -622,9 +864,213 @@ Your expertise covers: SQL injection, XSS, command injection, crypto issues, aut
     }
 
     /**
+     * Get current CIS configuration
+     */
+    getCISConfig(): { version: string; level: string; controls: string[] } {
+        return {
+            version: this.config.cisVersion || 'v8',
+            level: this.config.complianceLevel || 'Level 1',
+            controls: Array.from(this.cisControls.keys())
+        };
+    }
+
+    /**
+     * Update CIS configuration
+     */
+    updateCISConfig(cisVersion?: 'v8' | 'v7', complianceLevel?: 'Level 1' | 'Level 2' | 'Level 3'): void {
+        if (cisVersion) {
+            this.config.cisVersion = cisVersion;
+        }
+        if (complianceLevel) {
+            this.config.complianceLevel = complianceLevel;
+        }
+        
+        // Reinitialize CIS controls if version changed
+        if (cisVersion) {
+            this.cisControls = this.initializeCISControls();
+        }
+    }
+
+    /**
+     * Get detailed information about a specific CIS control
+     */
+    getCISControlInfo(controlId: string): CISControl | null {
+        return this.cisControls.get(controlId) || null;
+    }
+
+    /**
+     * Get all CIS controls applicable to a language
+     */
+    getCISControlsForLanguage(language: string): CISControl[] {
+        return this.getApplicableCISControls(language);
+    }
+
+    /**
+     * Validate CIS compliance for a specific control
+     */
+    async validateCISControl(
+        code: string,
+        controlId: string,
+        language: string
+    ): Promise<{ compliant: boolean; issues: SecurityIssue[]; recommendations: string[] }> {
+        const control = this.cisControls.get(controlId);
+        if (!control) {
+            throw new Error(`CIS Control ${controlId} not found`);
+        }
+
+        if (!this.agentId) {
+            await this.initialize();
+        }
+
+        try {
+            const prompt = `Analyze this ${language} code specifically for CIS Control ${controlId} compliance:
+
+**${control.title}** (${control.level})
+${control.description}
+
+Required checks: ${control.checks.join(', ')}
+
+Code to analyze:
+\`\`\`${language}
+${code}
+\`\`\`
+
+Respond with JSON:
+{
+  "compliant": true/false,
+  "issues": [/* same format as main analysis */],
+  "recommendations": ["specific recommendations for ${controlId} compliance"]
+}`;
+
+            const requestBody: LettaMessageRequest = {
+                messages: [{ role: 'user', text: prompt }]
+            };
+
+            const response: AxiosResponse<LettaMessageResponse> = await axios.post(
+                `${this.config.baseUrl}/agents/${this.agentId}/messages`,
+                requestBody,
+                {
+                    headers: this.getAuthHeaders(),
+                    timeout: this.REQUEST_TIMEOUT,
+                }
+            );
+
+            const assistantMessage = response.data.messages.find(msg => msg.role === 'assistant');
+            const responseText = assistantMessage?.text || '';
+            
+            const jsonStr = this.extractJSON(responseText);
+            if (jsonStr) {
+                const parsed = JSON.parse(jsonStr);
+                return {
+                    compliant: parsed.compliant || false,
+                    issues: this.parseSecurityIssuesWithCIS(JSON.stringify(parsed), code, language),
+                    recommendations: parsed.recommendations || []
+                };
+            }
+            
+            return {
+                compliant: false,
+                issues: [],
+                recommendations: [`Unable to analyze ${controlId} compliance - manual review recommended`]
+            };
+        } catch (error) {
+            console.error(`Failed to validate CIS control ${controlId}:`, error);
+            return {
+                compliant: false,
+                issues: [],
+                recommendations: [`Error validating ${controlId} - manual review required`]
+            };
+        }
+    }
+
+    /**
+     * Generate a CIS control implementation checklist
+     */
+    generateCISChecklist(language: string): { [controlId: string]: string[] } {
+        const checklist: { [controlId: string]: string[] } = {};
+        const applicableControls = this.getApplicableCISControls(language);
+
+        applicableControls.forEach(control => {
+            checklist[control.id] = control.checks.map(check => 
+                `${check} - ${control.level} requirement`
+            );
+        });
+
+        return checklist;
+    }
+
+    /**
      * Reset the client (useful for testing or configuration changes)
      */
     reset(): void {
         this.agentId = null;
+        this.cisControls = this.initializeCISControls();
     }
+
+    /**
+     * Get CIS compliance statistics from recent analyses
+     */
+    async getCISStats(): Promise<{
+        totalAnalyses: number;
+        averageComplianceScore: number;
+        commonViolations: { [controlId: string]: number };
+        improvementTrends: string;
+    }> {
+        if (!this.agentId) {
+            return {
+                totalAnalyses: 0,
+                averageComplianceScore: 0,
+                commonViolations: {},
+                improvementTrends: 'No data available - AI agent not initialized'
+            };
+        }
+
+        try {
+            const requestBody: LettaMessageRequest = {
+                messages: [
+                    {
+                        role: 'user',
+                        text: 'Provide statistics on CIS compliance analyses performed, including common violations and trends. Return as JSON with totalAnalyses, averageComplianceScore, commonViolations (object with control IDs as keys and count as values), and improvementTrends (string).'
+                    }
+                ]
+            };
+
+            const response: AxiosResponse<LettaMessageResponse> = await axios.post(
+                `${this.config.baseUrl}/agents/${this.agentId}/messages`,
+                requestBody,
+                {
+                    headers: this.getAuthHeaders(),
+                    timeout: this.REQUEST_TIMEOUT,
+                }
+            );
+
+            const assistantMessage = response.data.messages.find(msg => msg.role === 'assistant');
+            const responseText = assistantMessage?.text || '';
+            
+            const jsonStr = this.extractJSON(responseText);
+            if (jsonStr) {
+                return JSON.parse(jsonStr);
+            }
+            
+            return {
+                totalAnalyses: 0,
+                averageComplianceScore: 0,
+                commonViolations: {},
+                improvementTrends: 'Unable to retrieve statistics'
+            };
+        } catch (error) {
+            console.error('Failed to get CIS statistics:', error);
+            return {
+                totalAnalyses: 0,
+                averageComplianceScore: 0,
+                commonViolations: {},
+                improvementTrends: `Error retrieving statistics: ${this.getErrorMessage(error)}`
+            };
+        }
+    }
+}
+
+// Agent creation response interface
+interface CreateAgentResponse {
+    id: string;
 }

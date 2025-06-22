@@ -1,20 +1,6 @@
 import * as vscode from 'vscode';
-import { LettaClient } from './lettaClient';
-import { AIAnalysisResponse } from './lettaClient';
-
-interface AIAnalysisIssue {
-    line?: number;
-    lineEnd?: number;
-    severity?: string;
-    type?: string;
-    message?: string;
-    explanation?: string;
-    fix?: string;
-    codeExample?: string;
-    originalCode?: string;
-    revisedCode?: string;
-    revisionExplanation?: string;
-}
+import { LettaClient, AIAnalysisIssue, AIAnalysisResponse } from './lettaClient';
+import { string } from '@letta-ai/letta-client/core/schemas';
 
 export interface SecurityIssue {
     line: number;
@@ -27,10 +13,22 @@ export interface SecurityIssue {
     category: string;
     suggestion?: string;
     fixable: boolean;
+    lineEnd?: number;
+    type?: string;
+    explanation?: string;
+    fix?: string;
+    codeExample?: string;
 }
 
 export class SecurityAnalyzer {
-    private patterns: SecurityPattern[] = [
+    private patterns: {
+        id: string;
+        category: string;
+        pattern: RegExp;
+        severity: vscode.DiagnosticSeverity;
+        message: string;
+        suggestion?: string;
+    }[] = [
         // SQL Injection patterns
         {
             id: 'sql-injection',
@@ -100,9 +98,9 @@ export class SecurityAnalyzer {
         const patternIssues = this.analyzeWithPatterns(text, document);
         issues.push(...patternIssues);
         
-        // TODO: Add AI-based analysis here
-        // const aiIssues = await this.analyzeWithAI(text, document);
-        // issues.push(...aiIssues);
+        // Run AI-based analysis
+        const aiIssues = await this.analyzeWithAI(text, document);
+        issues.push(...aiIssues);
         
         return issues;
     }
@@ -156,29 +154,48 @@ export class SecurityAnalyzer {
     private async analyzeWithAI(text: string, document: vscode.TextDocument): Promise<SecurityIssue[]> {
         try {
             const client = new LettaClient();
-            const response = await client.analyzeCode(text);
+            const language = document.languageId;
+            const fileName = document.fileName;
+            const context = document.getText();
             
-            if (!response || !response.issues) {
-                throw new Error('No response from AI service');
+            // First attempt with AI analysis
+            try {
+                const issues = await client.analyzeCode(text, fileName, language, context);
+                
+                if (!issues || issues.length === 0) {
+                    throw new Error('No issues found from AI service');
+                }
+
+                return issues.map(issue => ({
+                    line: issue.line || 0,
+                    column: 0,
+                    endLine: issue.lineEnd || issue.line || 0,
+                    endColumn: 0,
+                    severity: typeof issue.severity === 'string' ? this.mapSeverity(issue.severity) : issue.severity,
+                    message: issue.message || 'Security issue detected',
+                    code: issue.type || 'unknown',
+                    category: issue.type || 'Unknown',
+                    suggestion: issue.explanation || issue.fix || issue.codeExample,
+                    fixable: true
+                }));
+            } catch (error) {
+                // Log specific error details
+                console.error('AI analysis failed:', {
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                    type: error instanceof Error ? error.name : 'Unknown',
+                    stack: error instanceof Error ? error.stack : undefined
+                });
+                
+                // Show user-friendly message
+                vscode.window.showWarningMessage(`AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}. Falling back to pattern-based analysis.`);
+                
+                // Fallback to pattern-based analysis
+                return this.analyzeWithPatterns(text, document);
             }
-
-            const issues = response.issues.map((issue: AIAnalysisIssue) => ({
-                line: issue.line || 0,
-                column: 0,
-                endLine: issue.lineEnd || issue.line || 0,
-                endColumn: 0,
-                severity: this.mapSeverity(issue.severity || 'error'),
-                message: issue.message || 'Security issue detected',
-                code: issue.type || 'unknown',
-                category: issue.type || 'Unknown',
-                suggestion: issue.explanation || issue.fix || issue.codeExample,
-                fixable: true
-            }));
-
-            return issues;
         } catch (error) {
-            console.error('AI analysis failed:', error);
-            vscode.window.showWarningMessage('AI analysis failed. Falling back to pattern-based analysis.');
+            // Handle any unexpected errors
+            console.error('Unexpected error in AI analysis:', error);
+            vscode.window.showErrorMessage('Unexpected error occurred. Using pattern-based analysis.');
             return this.analyzeWithPatterns(text, document);
         }
     }
@@ -191,16 +208,7 @@ export class SecurityAnalyzer {
             'hint': vscode.DiagnosticSeverity.Hint
         };
         
-        return severityMap[severity.toLowerCase()] || vscode.DiagnosticSeverity.Error;
+        const mappedSeverity = severityMap[severity.toLowerCase()];
+        return mappedSeverity !== undefined ? mappedSeverity : vscode.DiagnosticSeverity.Error;
     }
-    }
-
-
-interface SecurityPattern {
-    id: string;
-    category: string;
-    pattern: RegExp;
-    severity: vscode.DiagnosticSeverity;
-    message: string;
-    suggestion?: string;
 }
